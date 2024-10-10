@@ -107,10 +107,6 @@ impl BrainfuckInterpreter {
     }
 }
 
-fn add_one(x: i64) -> i64 {
-    x + 1
-}
-
 fn codegen() {
     use cranelift::codegen::{
         control::ControlPlane,

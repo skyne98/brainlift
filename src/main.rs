@@ -1,3 +1,11 @@
+use blocks::BrainFunctionBuilder;
+use cranelift::{
+    codegen::{control::ControlPlane, ir::Function, Context, Final},
+    prelude::InstBuilder,
+};
+
+pub mod blocks;
+
 enum Command {
     IncrementPointer,
     DecrementPointer,
@@ -107,20 +115,14 @@ impl BrainfuckInterpreter {
     }
 }
 
-fn codegen() {
-    use cranelift::codegen::{
-        control::ControlPlane,
-        ir::{types::I64, AbiParam, Function, InstBuilder, Signature, UserFuncName},
-        isa::CallConv,
-        Context,
-    };
-
-    let mut sig = Signature::new(CallConv::SystemV);
-    sig.params.push(AbiParam::new(I64));
-    sig.returns.push(AbiParam::new(I64));
-
-    let mut func = Function::with_name_signature(UserFuncName::default(), sig);
+fn compile_and_run() {
     use cranelift::frontend::{FunctionBuilder, FunctionBuilderContext};
+    let mut func = BrainFunctionBuilder::new()
+        .with_param(cranelift::codegen::ir::types::I64)
+        .with_return(cranelift::codegen::ir::types::I64)
+        .build()
+        .cranelift()
+        .clone();
 
     let mut func_ctx = FunctionBuilderContext::new();
     let mut builder = FunctionBuilder::new(&mut func, &mut func_ctx);
@@ -139,29 +141,15 @@ fn codegen() {
 
     println!("{}", func.display());
 
-    // Codegen
-    use cranelift::codegen::{isa, settings};
-    use target_lexicon::Triple;
-
-    let builder = settings::builder();
-    let flags = settings::Flags::new(builder);
-
-    let isa = match isa::lookup(Triple::host()) {
-        Err(err) => panic!("Error looking up target: {}", err),
-        Ok(isa_builder) => isa_builder.finish(flags).unwrap(),
-    };
-
-    let mut ctx = Context::for_function(func);
-    let mut control_plane = ControlPlane::default();
-    let code = ctx.compile(&*isa, &mut control_plane).unwrap();
+    let code = codegen(&func);
 
     // Map the compiled code and run
     let mut buffer = memmap2::MmapOptions::new()
-        .len(code.buffer.data().len())
+        .len(code.len())
         .map_anon()
         .unwrap();
 
-    buffer.copy_from_slice(code.code_buffer());
+    buffer.copy_from_slice(code.as_slice());
 
     let buffer = buffer.make_exec().unwrap();
 
@@ -175,11 +163,31 @@ fn codegen() {
     println!("out: {}", x);
 }
 
+fn codegen(func: &Function) -> Vec<u8> {
+    // Codegen
+    use cranelift::codegen::{isa, settings};
+    use target_lexicon::Triple;
+
+    let builder = settings::builder();
+    let flags = settings::Flags::new(builder);
+
+    let isa = match isa::lookup(Triple::host()) {
+        Err(err) => panic!("Error looking up target: {}", err),
+        Ok(isa_builder) => isa_builder.finish(flags).unwrap(),
+    };
+
+    let mut ctx = Context::for_function(func.clone());
+    let mut control_plane = ControlPlane::default();
+    let code = ctx.compile(&*isa, &mut control_plane).unwrap();
+
+    code.code_buffer().to_vec()
+}
+
 fn main() {
     let mut interpreter = BrainfuckInterpreter::new(vec![0; 30000]); // Initialize with 30,000 bytes of memory
     let code = "++[>++<-]>."; // Sample Brainfuck code
     interpreter.run(code);
 
     // Now try the code compilation and running
-    codegen();
+    compile_and_run();
 }
